@@ -1,0 +1,12 @@
+[package]
+name = "poelstra-test"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitcoin = "0.29"
+#{git = "https://github.com/rust-bitcoin/rust-bitcoin.git", rev="32afe5ae" }
+bitcoin_hashes = "0.11.0"
+hex = "0.4"
