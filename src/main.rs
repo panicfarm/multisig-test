@@ -55,10 +55,8 @@ mod tests {
             "032d7306898e980c66aefdfb6b377eaf71597c449bf9ce741a3380c5646354f6de",
             "03e8c742e1f283ef810c1cd0c8875e5c2998a05fc5b23c30160d3d33add7af5657",
         ];
-        let sig_vec = vec!["304402203b17b4f64fa7299e8a85a688bda3cb1394b80262598bbdffd71dab1d7f266098022019cc20dc20eae417374609cb9ca22b28261511150ed69d39664b9d3b1bcb3d12", "3045022100cfff9c400abb4ce5f247bd1c582cf54ec841719b0d39550b714c3c793fb4347b02201427a961a7f32aba4eeb1b71b080ea8712705e77323b747c03c8f5dbdda1025a"];
-        let script_pubkey = "5221032d7306898e980c66aefdfb6b377eaf71597c449bf9ce741a3380c5646354f6de2103e8c742e1f283ef810c1cd0c8875e5c2998a05fc5b23c30160d3d33add7af565752ae";
 
-        test_sighash_multisig(rawtx, 0, pk_vec, script_pubkey);
+        test_sighash_multisig(rawtx, 0, pk_vec);
     }
 
     #[test]
@@ -69,40 +67,42 @@ mod tests {
             "023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab6",
             "02d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa591",
         ];
-        let sig_vec = vec![
-          "3044022065ac8212e0fda09bc286169af551fa90ab20b54c28acc8bbb3c44e3a0f2af5de022056d41d30a2b845fba3c0e80d1fe4991b36717608b0bd3e5e31f8a7c5f608a1b9", 
-          "30450221008f9c17289fcc945e9ffed612a779962faaa477e36400288708766b11e3b75c7602207e2b4994fd7ac2a8d06cf676d4819de1880b597f90ca1a97fac5f92a4af2ffd7"];
-        let script_pubkey = 
-          "522102261f84d51bb64371cb5e9eec3bbc0c0c7320eb7fa9c5076a394a48a9cd74bfd321023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab62102d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa59153ae";
 
-        test_sighash_multisig(rawtx, 3, pk_vec, script_pubkey);
+        test_sighash_multisig(rawtx, 3, pk_vec);
     }
 
-    fn test_sighash_multisig(rawtx: &str, inp_idx: usize, pk_vec: Vec<&str>, script_pubkey: &str) {
+    fn test_sighash_multisig(rawtx: &str, inp_idx: usize, pk_vec: Vec<&str>) {
         let bytes: Vec<u8> = hex::FromHex::from_hex(&rawtx).expect("hex decoding");
         let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
         let inp = &tx.input[inp_idx];
         let script_sig = &inp.script_sig;
         println!("script_sig {}", script_sig);
-        let mut script_pubkey1;
+        let mut script_pubkey_bytes: &[u8] = &[];
         let mut sig_vec = vec![];
+        let mut last_sighash_flag = 0;
         //here we assume that we have an M of N multisig.`An assert will fail later if it's not.
         for (k, instr) in script_sig.instructions().enumerate() {
             match instr.unwrap() {
                 Instruction::PushBytes(pb) => {
+                    //extract sig_vec, script_pubkey_bytes from script_sig
                     if k == 0 {
                         assert!(pb.is_empty(), "first must be PUSHBYTES_0 got {:?}", pb)
                     } else if k == script_sig.instructions().count() - 1 {
-                        script_pubkey1 = pb //last is ScriptPubkey
+                        script_pubkey_bytes = pb; //last is ScriptPubkey
                     } else {
-                        //extract sig_vec, script_pubkey from script_sig
+                        //all others must be signatures between 70 and 73 bytes
                         let (sighash_flag, sig) = pb.split_last().unwrap();
-                        //TODO  take sighash_flag into account - can they be different?
                         assert!(
                             sig.len() <= 73 && sig.len() >= 70,
                             "signature length {} out of bounds",
                             sig.len()
                         );
+                        //take sighash_flag into account - can they be different?
+                        assert!(
+                            last_sighash_flag == 0 || last_sighash_flag == *sighash_flag,
+                            "different sighash flags"
+                        );
+                        last_sighash_flag = *sighash_flag;
                         sig_vec.push(sig);
                     }
                     println!("PushBytes len {}: {:?}", pb.to_vec().len(), pb)
@@ -112,15 +112,22 @@ mod tests {
                 }
             }
         }
-        //TODO extract pk_vec from script_pubkey
+
+        let script_pubkey = bitcoin::Script::from(Vec::from(script_pubkey_bytes));
+        for (k, instr) in script_pubkey.instructions().enumerate() {
+            match instr.unwrap() {
+                Instruction::PushBytes(pb) => {}
+                Instruction::Op(op) => {}
+            }
+        }
 
         let sighash = sighash::SighashCache::new(&tx);
         let mut out_bytes = vec![];
         let res = sighash.legacy_encode_signing_data_to(
             &mut out_bytes,
             inp_idx,
-            &bitcoin::Script::from_str(script_pubkey).unwrap(),
-            1u32, //bitcoin::EcdsaSighashType::All
+            &script_pubkey,
+            last_sighash_flag, //bitcoin::EcdsaSighashType::All
         );
         match res {
             EncodeSigningDataResult::SighashSingleBug => println!("!!! SighashSingleBug"),
