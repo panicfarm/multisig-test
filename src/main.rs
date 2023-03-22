@@ -107,28 +107,21 @@ mod tests {
         let script_pubkey = bitcoin::Script::from(Vec::from(script_pubkey_bytes));
         println!("script_pubkey: {:?}", script_pubkey);
 
-        let instr_cnt = script_pubkey.instructions().count();
         let mut pubkey_vec = vec![];
         let mut pubkey_cnt = 0;
         let mut required_sig_cnt = 0;
         for (k, instr) in script_pubkey.instructions().enumerate() {
             match instr.unwrap() {
                 Instruction::PushBytes(pb) => {
-                    if k > 0 && k < instr_cnt - 2 {
-                        pubkey_vec.push(pb);
-                    }
+                    assert!(k > 0);
+                    pubkey_vec.push(pb);
                 }
                 Instruction::Op(op) => {
                     if k == 0 {
                         // convert to the cnt by subtracting OP_PUSHNUM_1
                         required_sig_cnt =
                             op.to_u8() - bitcoin::blockdata::opcodes::all::OP_PUSHNUM_1.to_u8() + 1;
-                    } else if k == instr_cnt - 2 {
-                        // convert to the cnt by subtracting OP_PUSHNUM_1
-                        pubkey_cnt =
-                            op.to_u8() - bitcoin::blockdata::opcodes::all::OP_PUSHNUM_1.to_u8() + 1;
-                    } else {
-                        assert!(k == instr_cnt - 1);
+                    } else if op == bitcoin::blockdata::opcodes::all::OP_CHECKMULTISIG {
                         assert!(
                             pubkey_vec.len() == pubkey_cnt.into(),
                             "{}: {} -- pubkey vec len {}, pubkey cnt {}",
@@ -137,8 +130,13 @@ mod tests {
                             pubkey_vec.len(),
                             pubkey_cnt
                         );
-                        assert!(op == bitcoin::blockdata::opcodes::all::OP_CHECKMULTISIG);
                         println!("{}x{} MULTISIG", required_sig_cnt, pubkey_cnt);
+                    } else {
+                        assert!(k == pubkey_vec.len() + 1);
+                        // convert to the cnt by subtracting OP_PUSHNUM_1
+                        pubkey_cnt =
+                            op.to_u8() - bitcoin::blockdata::opcodes::all::OP_PUSHNUM_1.to_u8() + 1;
+                        assert!(pubkey_vec.len() == pubkey_cnt.into());
                     }
                 }
             }
@@ -162,16 +160,26 @@ mod tests {
 
         println!("sighash is {}", hex::ToHex::to_hex(&out_bytes[..]));
 
+        let mut sig_verified_cnt = 0;
         for pk in &pubkey_vec {
             let pk = bitcoin::secp256k1::PublicKey::from_slice(pk).unwrap();
             for sig in &sig_vec {
                 let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig).unwrap();
                 let secp = bitcoin::secp256k1::Secp256k1::new();
                 match secp.verify_ecdsa(&msg, &sig, &pk) {
-                    Ok(_) => println!("{}", pk),
+                    Ok(_) => {
+                        sig_verified_cnt += 1;
+                        println!("{}", pk)
+                    }
                     Err(err) => println!("{}", err),
                 }
             }
         }
+        assert!(
+            sig_verified_cnt == required_sig_cnt,
+            "{} signatures verified out of {} expected",
+            sig_verified_cnt,
+            required_sig_cnt
+        )
     }
 }
