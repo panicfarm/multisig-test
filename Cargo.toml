@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bitcoin = "0.29"
+bitcoin = "0.30"
 #{git = "https://github.com/rust-bitcoin/rust-bitcoin.git", rev="32afe5ae" }
-bitcoin_hashes = "0.11.0"
+#bitcoin_hashes = "0.11.0"
+bitcoin-internals = "0.1"
+hex_lit = "0.1"
 hex = "0.4"
