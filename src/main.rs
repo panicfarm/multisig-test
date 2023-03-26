@@ -38,7 +38,6 @@ mod tests {
             )
             .expect("computing sighash");
 
-        //println!("{}", hex::ToHex::to_hex(&out_bytes[..]));
         println!("{:x}", out_bytes.as_hex());
 
         let sig = bitcoin::secp256k1::ecdsa::Signature::from_str(
@@ -66,10 +65,11 @@ mod tests {
     }
 
     #[test]
-    fn test_sighash_p2wsh_multisig_MxN() {
-        let rawtx = "";
+    fn test_sighash_p2wsh_multisig_2x2() {
+        let rawtx = "010000000001011b9eb4122976fad8f809ee4cea8ac8d1c5b6b8e0d0f9f93327a5d78c9a3945280000000000ffffffff02ba3e0d00000000002200201c3b09401aaa7c9709d118a75d301bdb2180fb68b2e9b3ade8ad4ff7281780cfa586010000000000220020a41d0d894799879ca1bd88c1c3f1c2fd4b1592821cc3c5bfd5be5238b904b09f040047304402201c7563e876d67b5702aea5726cd202bf92d0b1dc52c4acd03435d6073e630bac022032b64b70d7fba0cb8be30b882ea06c5f8ec7288d113459dd5d3e294214e2c96201483045022100f532f7e3b8fd01a0edc86de4870db4e04858964d0a609df81deb99d9581e6c2e02206d9e9b6ab661176be8194faded62f518cdc6ee74dba919e0f35d77cff81f38e5014752210289da5da9d3700156db2d01e6362491733f6c886971791deda74b4e9d707190b2210323c437f30384498be79df2990ce5a8de00844e768c0ccce914335b6c26adea7352ae00000000";
+        let ref_out_value = 968240;
 
-        test_sighash_p2wsh_multisig(rawtx, 0);
+        test_sighash_p2wsh_multisig(rawtx, 0, ref_out_value);
     }
 
     fn test_sighash_p2sh_multisig(rawtx: &str, inp_idx: usize) {
@@ -113,6 +113,7 @@ mod tests {
                 }
             }
         }
+        println!("sig vec {:?}", sig_vec);
 
         let script_pubkey = bitcoin::Script::from_bytes(script_pubkey_bytes);
         let (required_sig_cnt, pubkey_vec) = decode_script_pubkey(&script_pubkey);
@@ -158,7 +159,7 @@ mod tests {
         )
     }
 
-    fn test_sighash_p2wsh_multisig(rawtx: &str, inp_idx: usize) {
+    fn test_sighash_p2wsh_multisig(rawtx: &str, inp_idx: usize, value: u64) {
         let bytes: Vec<u8> = hex::FromHex::from_hex(&rawtx).expect("hex decoding");
         let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
         let inp = &tx.input[inp_idx];
@@ -181,20 +182,19 @@ mod tests {
             );
             last_sighash_flag = *sighash_flag;
         }
+        println!("sig vec {:?}", sig_vec);
 
-        let sighash = sighash::SighashCache::new(&tx);
+        let mut sighash = sighash::SighashCache::new(&tx);
         let mut out_bytes = vec![];
-        let res = sighash.legacy_encode_signing_data_to(
-            &mut out_bytes,
-            inp_idx,
-            &script_pubkey,
-            last_sighash_flag, //bitcoin::EcdsaSighashType::All
-        );
-        match res {
-            EncodeSigningDataResult::SighashSingleBug => println!("!!! SighashSingleBug"),
-            EncodeSigningDataResult::WriteResult(Ok(_)) => println!("sighash Ok"),
-            EncodeSigningDataResult::WriteResult(Err(err)) => println!("{}", err),
-        }
+        sighash
+            .segwit_encode_signing_data_to(
+                &mut out_bytes,
+                inp_idx,
+                &script_pubkey,
+                value,
+                bitcoin::sighash::EcdsaSighashType::All, //TODO deal with the flags u8 does not work
+            )
+            .unwrap();
         let hash = sha256d::Hash::hash(&out_bytes);
         let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
 
