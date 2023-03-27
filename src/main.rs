@@ -144,22 +144,8 @@ mod tests {
         let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
 
         println!("sighash is {:x}", out_bytes.as_hex());
+        let sig_verified_cnt = vrfy_sigs_pks(&msg, pubkey_vec, sig_vec);
 
-        let mut sig_verified_cnt = 0;
-        for pk in &pubkey_vec {
-            let pk = bitcoin::secp256k1::PublicKey::from_slice(pk).unwrap();
-            for sig in &sig_vec {
-                let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig).unwrap();
-                let secp = bitcoin::secp256k1::Secp256k1::new();
-                match secp.verify_ecdsa(&msg, &sig, &pk) {
-                    Ok(_) => {
-                        sig_verified_cnt += 1;
-                        println!("{}", pk)
-                    }
-                    Err(err) => println!("{}", err),
-                }
-            }
-        }
         assert!(
             sig_verified_cnt == required_sig_cnt,
             "{} signatures verified out of {} expected",
@@ -209,22 +195,8 @@ mod tests {
         let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
 
         println!("sighash is {:x}", out_bytes.as_hex());
+        let sig_verified_cnt = vrfy_sigs_pks(&msg, pubkey_vec, sig_vec);
 
-        let mut sig_verified_cnt = 0;
-        for pk in &pubkey_vec {
-            let pk = bitcoin::secp256k1::PublicKey::from_slice(pk).unwrap();
-            for sig in &sig_vec {
-                let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig).unwrap();
-                let secp = bitcoin::secp256k1::Secp256k1::new();
-                match secp.verify_ecdsa(&msg, &sig, &pk) {
-                    Ok(_) => {
-                        sig_verified_cnt += 1;
-                        println!("{}", pk)
-                    }
-                    Err(err) => println!("{}", err),
-                }
-            }
-        }
         assert!(
             sig_verified_cnt == required_sig_cnt,
             "{} signatures verified out of {} expected",
@@ -297,21 +269,7 @@ mod tests {
 
         println!("sighash is {:x}", out_bytes.as_hex());
 
-        let mut sig_verified_cnt = 0;
-        for pk in &pubkey_vec {
-            let pk = bitcoin::secp256k1::PublicKey::from_slice(pk).unwrap();
-            for sig in &sig_vec {
-                let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig).unwrap();
-                let secp = bitcoin::secp256k1::Secp256k1::new();
-                match secp.verify_ecdsa(&msg, &sig, &pk) {
-                    Ok(_) => {
-                        sig_verified_cnt += 1;
-                        println!("{}", pk)
-                    }
-                    Err(err) => println!("{}", err),
-                }
-            }
-        }
+        let sig_verified_cnt = vrfy_sigs_pks(&msg, pubkey_vec, sig_vec);
         assert!(
             sig_verified_cnt == required_sig_cnt,
             "{} signatures verified out of {} expected",
@@ -359,5 +317,41 @@ mod tests {
         }
 
         (required_sig_cnt.into(), pubkey_vec)
+    }
+
+    /// Verifies a vector of signatures agains  a vector of pubkeys
+    ///
+    /// Uses algorithm from https://en.bitcoin.it/wiki/OP_CHECKMULTISIG
+    ///
+    /// # Arguments
+    ///
+    /// * `msg`  - Spending transaction's sighash
+    /// * `pubkey_vec`  - Vector of pubkeys from ScriptPubkey
+    /// * `sig_vec`  - Vector of signatures from the spending transaction's input
+    ///
+    /// # Returns
+    ///
+    /// The number of pubkeys from pubkey_vec that correspond to a signature from sig_vec
+    fn vrfy_sigs_pks(
+        msg: &bitcoin::secp256k1::Message,
+        pubkey_vec: Vec<&[u8]>,
+        sig_vec: Vec<&[u8]>,
+    ) -> usize {
+        let mut sig_verified_cnt = 0;
+        for pk in &pubkey_vec {
+            let pk = bitcoin::secp256k1::PublicKey::from_slice(pk).unwrap();
+            for sig in &sig_vec {
+                let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig).unwrap();
+                let secp = bitcoin::secp256k1::Secp256k1::new();
+                match secp.verify_ecdsa(&msg, &sig, &pk) {
+                    Ok(_) => {
+                        sig_verified_cnt += 1;
+                        println!("{}", pk)
+                    }
+                    Err(err) => println!("{}", err),
+                }
+            }
+        }
+        sig_verified_cnt
     }
 }
