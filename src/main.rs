@@ -72,6 +72,15 @@ mod tests {
         test_sighash_p2wsh_multisig(rawtx, 0, ref_out_value);
     }
 
+    #[test]
+    fn test_sighash_p2ms_multisig_2x3() {
+        let rawtx = "010000000110a5fee9786a9d2d72c25525e52dd70cbd9035d5152fac83b62d3aa7e2301d58000000009300483045022100af204ef91b8dba5884df50f87219ccef22014c21dd05aa44470d4ed800b7f6e40220428fe058684db1bb2bfb6061bff67048592c574effc217f0d150daedcf36787601483045022100e8547aa2c2a2761a5a28806d3ae0d1bbf0aeff782f9081dfea67b86cacb321340220771a166929469c34959daf726a2ac0c253f9aff391e58a3c7cb46d8b7e0fdc4801ffffffff0180a21900000000001976a914971802edf585cdbc4e57017d6e5142515c1e502888ac00000000";
+        let reftx_script_pubkey_bytes = hex!("524104d81fd577272bbe73308c93009eec5dc9fc319fc1ee2e7066e17220a5d47a18314578be2faea34b9f1f8ca078f8621acd4bc22897b03daa422b9bf56646b342a24104ec3afff0b2b66e8152e9018fe3be3fc92b30bf886b3487a525997d00fd9da2d012dce5d5275854adc3106572a5d1e12d4211b228429f5a7b2f7ba92eb0475bb14104b49b496684b02855bc32f5daefa2e2e406db4418f3b86bca5195600951c7d918cdbe5e6d3736ec2abf2dd7610995c3086976b2c0c7b4e459d10b34a316d5a5e753ae");
+
+        test_sighash_p2ms_multisig(rawtx, 0, &reftx_script_pubkey_bytes);
+    }
+
+    /// reftx output's scriptPubKey.type is "scripthash"
     fn test_sighash_p2sh_multisig(rawtx: &str, inp_idx: usize) {
         let bytes: Vec<u8> = hex::FromHex::from_hex(&rawtx).expect("hex decoding");
         let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
@@ -159,6 +168,7 @@ mod tests {
         )
     }
 
+    /// reftx output's scriptPubKey.type is "witness_v0_scripthash"
     fn test_sighash_p2wsh_multisig(rawtx: &str, inp_idx: usize, value: u64) {
         let bytes: Vec<u8> = hex::FromHex::from_hex(&rawtx).expect("hex decoding");
         let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
@@ -195,6 +205,93 @@ mod tests {
                 bitcoin::sighash::EcdsaSighashType::All, //TODO deal with the flags u8 does not work
             )
             .unwrap();
+        let hash = sha256d::Hash::hash(&out_bytes);
+        let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
+
+        println!("sighash is {:x}", out_bytes.as_hex());
+
+        let mut sig_verified_cnt = 0;
+        for pk in &pubkey_vec {
+            let pk = bitcoin::secp256k1::PublicKey::from_slice(pk).unwrap();
+            for sig in &sig_vec {
+                let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig).unwrap();
+                let secp = bitcoin::secp256k1::Secp256k1::new();
+                match secp.verify_ecdsa(&msg, &sig, &pk) {
+                    Ok(_) => {
+                        sig_verified_cnt += 1;
+                        println!("{}", pk)
+                    }
+                    Err(err) => println!("{}", err),
+                }
+            }
+        }
+        assert!(
+            sig_verified_cnt == required_sig_cnt,
+            "{} signatures verified out of {} expected",
+            sig_verified_cnt,
+            required_sig_cnt
+        )
+    }
+
+    /// reftx output's scriptPubKey.type is "multisig"
+    fn test_sighash_p2ms_multisig(rawtx: &str, inp_idx: usize, script_pubkey_bytes: &[u8]) {
+        let bytes: Vec<u8> = hex::FromHex::from_hex(&rawtx).expect("hex decoding");
+        let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
+        let inp = &tx.input[inp_idx];
+        let script_sig = &inp.script_sig;
+        println!("script_sig {}", script_sig);
+        //let mut script_pubkey_bytes: &[u8] = hex!(reftx_script_pubkey_str);
+        let mut sig_vec = vec![];
+        let mut last_sighash_flag = 0;
+        //
+        //here we assume that we have an M of N multisig.`An assert will fail later if it's not.
+        for (k, instr) in script_sig.instructions().enumerate() {
+            match instr.unwrap() {
+                Instruction::PushBytes(pb) => {
+                    //extract sig_vec from script_sig
+                    if k == 0 {
+                        assert!(pb.is_empty(), "first must be PUSHBYTES_0 got {:?}", pb)
+                    } else {
+                        //all others must be signatures between 70 and 73 bytes
+                        let (sighash_flag, sig) = pb.as_bytes().split_last().unwrap();
+                        assert!(
+                            sig.len() <= 73 && sig.len() >= 70,
+                            "signature length {} out of bounds",
+                            sig.len()
+                        );
+                        //take sighash_flag into account - can they be different?
+                        assert!(
+                            last_sighash_flag == 0 || last_sighash_flag == *sighash_flag,
+                            "different sighash flags"
+                        );
+                        last_sighash_flag = *sighash_flag;
+                        sig_vec.push(sig);
+                    }
+                    println!("PushBytes len {}: {:?}", pb.as_bytes().to_vec().len(), pb)
+                }
+                Instruction::Op(op) => {
+                    assert!(false, "we only expect PushBytes here, got Op({})", op)
+                }
+            }
+        }
+        println!("sig vec {:?}", sig_vec);
+
+        let script_pubkey = bitcoin::Script::from_bytes(script_pubkey_bytes);
+        let (required_sig_cnt, pubkey_vec) = decode_script_pubkey(&script_pubkey);
+
+        let sighash = sighash::SighashCache::new(&tx);
+        let mut out_bytes = vec![];
+        let res = sighash.legacy_encode_signing_data_to(
+            &mut out_bytes,
+            inp_idx,
+            &script_pubkey,
+            last_sighash_flag, //bitcoin::EcdsaSighashType::All
+        );
+        match res {
+            EncodeSigningDataResult::SighashSingleBug => println!("!!! SighashSingleBug"),
+            EncodeSigningDataResult::WriteResult(Ok(_)) => println!("sighash Ok"),
+            EncodeSigningDataResult::WriteResult(Err(err)) => println!("{}", err),
+        }
         let hash = sha256d::Hash::hash(&out_bytes);
         let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
 
