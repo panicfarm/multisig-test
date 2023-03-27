@@ -144,7 +144,7 @@ mod tests {
         let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
 
         println!("sighash is {:x}", out_bytes.as_hex());
-        let sig_verified_cnt = vrfy_sigs_pks(&msg, pubkey_vec, sig_vec);
+        let sig_verified_cnt = verify_sigs_against_pubkeys(&msg, pubkey_vec, sig_vec);
 
         assert!(
             sig_verified_cnt == required_sig_cnt,
@@ -188,14 +188,14 @@ mod tests {
                 inp_idx,
                 &script_pubkey,
                 value,
-                bitcoin::sighash::EcdsaSighashType::All, //TODO deal with the flags u8 does not work
+                bitcoin::sighash::EcdsaSighashType::from_consensus(last_sighash_flag.into()),
             )
             .unwrap();
         let hash = sha256d::Hash::hash(&out_bytes);
         let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
 
         println!("sighash is {:x}", out_bytes.as_hex());
-        let sig_verified_cnt = vrfy_sigs_pks(&msg, pubkey_vec, sig_vec);
+        let sig_verified_cnt = verify_sigs_against_pubkeys(&msg, pubkey_vec, sig_vec);
 
         assert!(
             sig_verified_cnt == required_sig_cnt,
@@ -269,7 +269,7 @@ mod tests {
 
         println!("sighash is {:x}", out_bytes.as_hex());
 
-        let sig_verified_cnt = vrfy_sigs_pks(&msg, pubkey_vec, sig_vec);
+        let sig_verified_cnt = verify_sigs_against_pubkeys(&msg, pubkey_vec, sig_vec);
         assert!(
             sig_verified_cnt == required_sig_cnt,
             "{} signatures verified out of {} expected",
@@ -278,6 +278,15 @@ mod tests {
         )
     }
 
+    /// Decodes ScriptPubKey into a required signature count and a vector of pubkeys
+    ///
+    /// # Arguments
+    ///
+    /// * `script_pubkey`  - ScriptPubkey
+    ///
+    /// # Returns
+    ///
+    /// A tuple (required signature count, vector of pubkeys)
     fn decode_script_pubkey(script_pubkey: &bitcoin::Script) -> (usize, Vec<&[u8]>) {
         println!("script_pubkey: {:?}", script_pubkey);
 
@@ -319,7 +328,7 @@ mod tests {
         (required_sig_cnt.into(), pubkey_vec)
     }
 
-    /// Verifies a vector of signatures agains  a vector of pubkeys
+    /// Verifies a vector of signatures against a vector of pubkeys
     ///
     /// Uses algorithm from https://en.bitcoin.it/wiki/OP_CHECKMULTISIG
     ///
@@ -332,7 +341,7 @@ mod tests {
     /// # Returns
     ///
     /// The number of pubkeys from pubkey_vec that correspond to a signature from sig_vec
-    fn vrfy_sigs_pks(
+    fn verify_sigs_against_pubkeys(
         msg: &bitcoin::secp256k1::Message,
         pubkey_vec: Vec<&[u8]>,
         sig_vec: Vec<&[u8]>,
