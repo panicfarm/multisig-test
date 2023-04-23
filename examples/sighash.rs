@@ -298,29 +298,36 @@ fn decode_script_pubkey(script_pubkey: &bitcoin::Script) -> (usize, Vec<bitcoin:
             }
             Instruction::Op(op) => {
                 if k == 0 {
-                    // convert OP_PUSHNUM_N to N by subtracting OP_PUSHNUM_1 hex offset
                     required_sig_cnt =
-                        op.to_u8() - bitcoin::blockdata::opcodes::all::OP_PUSHNUM_1.to_u8() + 1;
+                        match op.classify(bitcoin::blockdata::opcodes::ClassifyContext::Legacy) {
+                            bitcoin::blockdata::opcodes::Class::PushNum(m) => m,
+                            _ => panic!("NaN"),
+                        };
                 } else if op == bitcoin::blockdata::opcodes::all::OP_CHECKMULTISIG {
                     assert!(
-                        pubkey_vec.len() == pubkey_cnt.into(),
+                        pubkey_vec.len() == pubkey_cnt.try_into().unwrap(),
                         "{}: {} -- pubkey vec len {}, pubkey cnt {}",
                         k,
                         op,
                         pubkey_vec.len(),
                         pubkey_cnt
                     );
-                    println!("{}x{} MULTISIG", required_sig_cnt, pubkey_cnt);
+                    println!(
+                        "ScriptPubKey is {}x{} MULTISIG",
+                        required_sig_cnt, pubkey_cnt
+                    );
                 } else {
                     assert!(k == pubkey_vec.len() + 1);
-                    // convert OP_PUSHNUM_N to N by subtracting OP_PUSHNUM_1 hex offset
                     pubkey_cnt =
-                        op.to_u8() - bitcoin::blockdata::opcodes::all::OP_PUSHNUM_1.to_u8() + 1;
-                    assert!(pubkey_vec.len() == pubkey_cnt.into());
+                        match op.classify(bitcoin::blockdata::opcodes::ClassifyContext::Legacy) {
+                            bitcoin::blockdata::opcodes::Class::PushNum(n) => n,
+                            _ => panic!("NaN"),
+                        };
+                    assert!(pubkey_vec.len() == pubkey_cnt.try_into().unwrap());
                 }
             }
         }
     }
 
-    (required_sig_cnt.into(), pubkey_vec)
+    (required_sig_cnt.try_into().unwrap(), pubkey_vec)
 }
