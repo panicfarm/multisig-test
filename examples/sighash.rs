@@ -1,19 +1,12 @@
 use bitcoin::blockdata::script::Instruction;
-use bitcoin::blockdata::transaction::EncodeSigningDataResult;
-use bitcoin::consensus::deserialize;
-use bitcoin::hashes::{sha256d, Hash};
 use bitcoin::sighash;
-use bitcoin_hashes::hex::FromHex;
-use bitcoin_internals::hex::display::DisplayHex;
 use hex_lit::hex;
 
-//These are real blockchain transactions examples of computing sighash and signature verifications for:
+//These are real blockchain transactions examples of computing sighash for:
 // - P2WPKH
 // - P2MS 2of3
 // - P2SH 2of2 multisig
-// - P2SH 2of3 multisig
 // - P2WSH 2of2 multisig
-//For the M of N multisigs, the functions verify that M from the N PubKeys from the ScriptPubKey  (or WitnessScript) do correspond to the M input's signatures, given the sighash computation.
 
 //run with: cargo run --example sighash
 
@@ -23,59 +16,23 @@ fn main() {
     test_sighash_p2wpkh();
     test_sighash_p2ms_multisig_2x3();
     test_sighash_p2sh_multisig_2x2();
-    test_sighash_p2sh_multisig_2x3();
     test_sighash_p2wsh_multisig_2x2();
 }
 
+/// Example showing how to verify the signature for spending a p2wpkh transaction.
 fn test_sighash_p2wpkh() {
     //Spending transaction:
     //bitcoin-cli getrawtransaction 663becacc6368150a46725e404ccdfa34d1fffbececa784c31f0a7849b4dad08  3
-    let rawtx = "020000000001015ce1d4ffc716022f83cc0d557e6dad0500eeff9e9623bde014bdc09c5b672d750000000000fdffffff025fb7460b000000001600142cf4c1dc0352e0658971ca62a7457a1cd8c3389c4ce3a2000000000016001433f57fe374c6ceab61c8639128c038ac2a8c8db60247304402203cb50efb5c4a9aa7fd369ab6f4b226db99f44f9c610b5b50bc42f343a6aa401302201af791542eee6c1b11705e8895cc5adc36458910dc91aadcafb76a6478a29b9f01210242e811e66fd17e9a6e4ef772766c668d6e0595ca1d7f0583148bc460b575fbfdf0df0b00";
+    let raw_tx = hex!("020000000001015ce1d4ffc716022f83cc0d557e6dad0500eeff9e9623bde014bdc09c5b672d750000000000fdffffff025fb7460b000000001600142cf4c1dc0352e0658971ca62a7457a1cd8c3389c4ce3a2000000000016001433f57fe374c6ceab61c8639128c038ac2a8c8db60247304402203cb50efb5c4a9aa7fd369ab6f4b226db99f44f9c610b5b50bc42f343a6aa401302201af791542eee6c1b11705e8895cc5adc36458910dc91aadcafb76a6478a29b9f01210242e811e66fd17e9a6e4ef772766c668d6e0595ca1d7f0583148bc460b575fbfdf0df0b00");
+
     //vin:0
     let inp_idx = 0;
     //output value from the referenced vout:0 from the referenced tx:
     //bitcoin-cli getrawtransaction 752d675b9cc0bd14e0bd23969effee0005ad6d7e550dcc832f0216c7ffd4e15c  3
-    let out_value = 200000000;
+    let ref_out_value = 200000000;
 
-    let bytes: Vec<u8> = FromHex::from_hex(&rawtx).expect("hex decoding");
-    let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
-
-    let inp = &tx.input[inp_idx];
-    let witness = &inp.witness;
-    println!("witness {:?}", witness);
-    let script_pubkey_bytes: &[u8] = witness.last().expect("Out of Bounds");
-    let (sighash_flag, sig_bytes) = witness.nth(0).expect("Out of Bounds").split_last().unwrap();
-    let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig_bytes).unwrap();
-    println!("signature is {:x}", sig_bytes.as_hex());
-    let pk_secp256 = bitcoin::secp256k1::PublicKey::from_slice(script_pubkey_bytes).unwrap();
-    let pk = bitcoin::key::PublicKey::new(pk_secp256);
-    let pkh = pk.pubkey_hash(); //20 bytes
-    println!("PubKeyHash` is {:x}", pkh);
-    //according to https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki:
-    //"The item 5 : For P2WPKH witness program, the scriptCode is 0x1976a914{20-byte-pubkey-hash}88ac"
-    //this is nothing but a standard P2PKH script OP_DUP OP_HASH160 <pubKeyHash> OP_EQUALVERIFY OP_CHECKSIG
-    let buf = bitcoin::blockdata::script::ScriptBuf::new_p2pkh(&pkh);
-    let script_code = buf.as_script();
-
-    let mut sighash = sighash::SighashCache::new(&tx);
-    let mut out_bytes = vec![];
-    sighash
-        .segwit_encode_signing_data_to(
-            &mut out_bytes,
-            inp_idx,
-            &script_code,
-            out_value,
-            bitcoin::sighash::EcdsaSighashType::from_consensus((*sighash_flag).into()),
-        )
-        .expect("computing sighash");
-
-    println!("sighash is {:x}", out_bytes.as_hex());
-
-    let secp = bitcoin::secp256k1::Secp256k1::new();
-
-    let hash = sha256d::Hash::hash(&out_bytes);
-    let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
-    secp.verify_ecdsa(&msg, &sig, &pk_secp256).unwrap();
+    println!("\nsighash_p2wpkh:");
+    compute_sighash_p2wpkh(&raw_tx, inp_idx, ref_out_value);
 }
 
 fn test_sighash_p2sh_multisig_2x2() {
@@ -84,23 +41,11 @@ fn test_sighash_p2sh_multisig_2x2() {
     //after decoding ScriptSig from the input:0, its last ASM element is the scriptpubkey:
     //bitcoin-cli decodescript 5221032d7306898e980c66aefdfb6b377eaf71597c449bf9ce741a3380c5646354f6de2103e8c742e1f283ef810c1cd0c8875e5c2998a05fc5b23c30160d3d33add7af565752ae
     //its ASM is 2 of 2 multisig: 2 032d7306898e980c66aefdfb6b377eaf71597c449bf9ce741a3380c5646354f6de 03e8c742e1f283ef810c1cd0c8875e5c2998a05fc5b23c30160d3d33add7af5657 2 OP_CHECKMULTISIG
-    let rawtx = "0100000001d611ad58b2f5bc0db7d15dfde4f497d6482d1b4a1e8c462ef077d4d32b3dae7901000000da0047304402203b17b4f64fa7299e8a85a688bda3cb1394b80262598bbdffd71dab1d7f266098022019cc20dc20eae417374609cb9ca22b28261511150ed69d39664b9d3b1bcb3d1201483045022100cfff9c400abb4ce5f247bd1c582cf54ec841719b0d39550b714c3c793fb4347b02201427a961a7f32aba4eeb1b71b080ea8712705e77323b747c03c8f5dbdda1025a01475221032d7306898e980c66aefdfb6b377eaf71597c449bf9ce741a3380c5646354f6de2103e8c742e1f283ef810c1cd0c8875e5c2998a05fc5b23c30160d3d33add7af565752aeffffffff020ed000000000000016001477800cff52bd58133b895622fd1220d9e2b47a79cd0902000000000017a914da55145ca5c56ba01f1b0b98d896425aa4b0f4468700000000";
+    let raw_tx = hex!("0100000001d611ad58b2f5bc0db7d15dfde4f497d6482d1b4a1e8c462ef077d4d32b3dae7901000000da0047304402203b17b4f64fa7299e8a85a688bda3cb1394b80262598bbdffd71dab1d7f266098022019cc20dc20eae417374609cb9ca22b28261511150ed69d39664b9d3b1bcb3d1201483045022100cfff9c400abb4ce5f247bd1c582cf54ec841719b0d39550b714c3c793fb4347b02201427a961a7f32aba4eeb1b71b080ea8712705e77323b747c03c8f5dbdda1025a01475221032d7306898e980c66aefdfb6b377eaf71597c449bf9ce741a3380c5646354f6de2103e8c742e1f283ef810c1cd0c8875e5c2998a05fc5b23c30160d3d33add7af565752aeffffffff020ed000000000000016001477800cff52bd58133b895622fd1220d9e2b47a79cd0902000000000017a914da55145ca5c56ba01f1b0b98d896425aa4b0f4468700000000");
     let inp_idx = 0;
 
-    test_sighash_legacy_multisig(rawtx, inp_idx, None);
-}
-
-fn test_sighash_p2sh_multisig_2x3() {
-    //Spending transactoin:
-    //bitcoin-cli getrawtransaction 3589ada609ec2bbbb7a1ab0cee292eae4227ecaff5e327059b7ef101b4f1d965  3
-    //after decoding ScriptSig from the input:3, its last ASM element is the scriptpubkey:
-    //bitcoin-cli decodescript 522102261f84d51bb64371cb5e9eec3bbc0c0c7320eb7fa9c5076a394a48a9cd74bfd321023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab62102d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa59153ae
-    //its ASM is 2 of 3 multisig: 2 02261f84d51bb64371cb5e9eec3bbc0c0c7320eb7fa9c5076a394a48a9cd74bfd3 023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab6 02d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa591 3 OP_CHECKMULTISIG
-    let rawtx = "010000000a2aafcf32a7d0998e146f02d9948b8530a7c574f24e51ac4e5f8009dc8121228800000000fdfd000047304402205b959fc960be4256a6fe61f75013beb552f7f78352c4b8ddf5cd9747a7757af702207e540d95c8be8b096976685f61ec9d38ccaf68903c34ada54b9878ce21c40d3b014830450221009d2386c125126dcf7a90b85145b57983c4777b6d31526bb01c3dc44ad6b66d3f02205bfdfe89a6114d2d9e5d27f090fad46393251510777880817db65ada47ee3c49014c69522102261f84d51bb64371cb5e9eec3bbc0c0c7320eb7fa9c5076a394a48a9cd74bfd321023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab62102d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa59153aeffffffff902196cd0936b8854a2f6a748c4a15ce397bb213e59599f809ac823b9fd2dec700000000fdfd0000483045022100dc2e50c9f852edf89a9d295995c91bb07857c3b18e98549b68c2b45a76f4b608022076cfff6d39245b7b8602691cbe9466a254b398d3d9f114a63a59febae645449401473044022012f66786119c435832fb715520232f45c7b541d68db0158c2d1e13b27c7b4dcd022051011c7bb2256236ca238a935bace3f073c851111fa9274fa609422d77cb617f014c69522102261f84d51bb64371cb5e9eec3bbc0c0c7320eb7fa9c5076a394a48a9cd74bfd321023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab62102d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa59153aeffffffff2e9dbb1cabff6041ea2951105f877fb14addb45fa42e70eaec2d1ab17e0d37c300000000fdfe0000483045022100c1510121f06ee1cf200ef9dc19cc5fff5f6a2ec087dc618e39c053eb397722a202203672ac3c49a0d9f332efcd03801bc7d68e9d4bc6b84e77591f22d7088108baca01483045022100baf85a48dd5b90b95e94961a54ce6d004d0ab0d6c82e898f4038654d284ffb77022002719f0b1c5bf069a296df8df40fce65ed5922a6469fd2b5774714b742a59893014c69522102261f84d51bb64371cb5e9eec3bbc0c0c7320eb7fa9c5076a394a48a9cd74bfd321023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab62102d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa59153aeffffffff7ae4f4513dc761a41855b7ec5f111e192fd40f0490aa6b01c0cbb9f32585db9c00000000fdfd0000473044022065ac8212e0fda09bc286169af551fa90ab20b54c28acc8bbb3c44e3a0f2af5de022056d41d30a2b845fba3c0e80d1fe4991b36717608b0bd3e5e31f8a7c5f608a1b9014830450221008f9c17289fcc945e9ffed612a779962faaa477e36400288708766b11e3b75c7602207e2b4994fd7ac2a8d06cf676d4819de1880b597f90ca1a97fac5f92a4af2ffd7014c69522102261f84d51bb64371cb5e9eec3bbc0c0c7320eb7fa9c5076a394a48a9cd74bfd321023e66621cf94ac25d8bb687abef86d01847805d6e9bff8c3999f18f478cde5ab62102d844059fae247b8e1325f56519d1eb7d4b632ec77b9f71f03102167f3c7fa59153aeffffffff924c652d9953c90ba157e17009f3d609f3e9c74944b1905098c34f7cebdf307b01000000fc004730440220229015b2578422b9cfc67a7ae63956cba017efd3a85546dc26b482bd2a0ac3fe02206447c1f8e27784a796ded47988d0ddf57f1ec35bd2e3fea85ce1698f057d7e550147304402206de04ad86eac89ee9faeaadf9111a28c6dbb11f0f13e759dcafdece70c30843702204dd198460c0877eb3c006205750f1d221b76c0a92efadd27c848974545da305a014c69522102d828f488cb7999b5e8f86d96ffdfca8df623b9c69110deb17bebbf078fba5c712102ddb0d4d376eddf45d3342dc10ff990a8824a8ee27cbf677d8b8598e95d39dfa021037ec133aafd59281211f544672eeae73d41c7997c93f339dc7656a8d3dd7564e053aeffffffff9e34c86d4547fa8a66a34cf2261da011e4d7b32110273881678c58ad65af6deb00000000fdfe0000483045022100cf6c69951457ec074ade356043089d9ebadb53cc003be857c0de9c884cac4d6102205616d1ab0e0c11d602247d379436b6500a1d07c774ad61dc944a53cdee1809d101483045022100a7e9e63c92108cc3ac014ddd593755feec949bdae2450de001dadfe94038a1b8022033ba6ca06ee46e3808dd027c27f5cb630fc1bd6807487ec7af2c789854daba4f014c69522102d828f488cb7999b5e8f86d96ffdfca8df623b9c69110deb17bebbf078fba5c712102ddb0d4d376eddf45d3342dc10ff990a8824a8ee27cbf677d8b8598e95d39dfa021037ec133aafd59281211f544672eeae73d41c7997c93f339dc7656a8d3dd7564e053aeffffffffafde87dca43f6b06dbe1520a9389ad31e70af9e3324bf9c1bca013b1bb76fdc900000000fdfd00004730440220727a0e2be9949e991ab5ff203001281127a7b5d13a1b3ca9b7276333f9371b3602206a3f07b6879eae1759046a1ce47b4a303587eaf47aada346b19b8924fb99d80e01483045022100e4a947ccf698f670ef45b5963cd0baced9886defcbdc8f65e951a414f51df86e022010715ee835a68f1c20e3be46b48b80e8f05d587c9edc562e7bf2fa307f21cff8014c695221023cbc2ad2dad9231a9e907a4a69dcfe2514d04db5a0fc5a903361fb892b16be8021027b766284e7c9db06628dd9481c6176dd94524c2317f7ca4e8f1ab549c9fe8da62103a9e76e199de14118b683187c1c7fcbf5427e8cc2c290d5daf1261a716742a69c53aeffffffffdfc3afe3f49543716276373812826f55b9dc4e9f2ee2c858cb0b5e19e33f7c9500000000fdfd00004730440220685655193c0dd894bc348bb5b8ac0247764784b947ab53b538a4f88008749f6402204a4b5912d558aa278a8ee3744ba74384c30420e8d2724ed13b35201fb013437301483045022100ae6da2282de47eb9d655b801b41d1494ccf995753104d9741a0d63bd4646eb1b0220607cbcbe76e6628fe902bf3ea6597400f878e9ef2302ff7ae4e62a70c95babaf014c695221023cbc2ad2dad9231a9e907a4a69dcfe2514d04db5a0fc5a903361fb892b16be8021027b766284e7c9db06628dd9481c6176dd94524c2317f7ca4e8f1ab549c9fe8da62103a9e76e199de14118b683187c1c7fcbf5427e8cc2c290d5daf1261a716742a69c53aeffffffff9de37111afcc701f30167f463c14467ffff8af317837e8b0644220610dcaacc501000000fdfd000047304402207b240fdcde83165df09dcb7b7e9f7fd768106ab648520b47e2d723e6263306cb02201f1f803e8f35a54aeb683d2d22e7215ee03e8a4a584c144a588a6ce0355fc85101483045022100f3ebeab2532d71945fdc945a8ca7b7e46107a0478754938cdf4f82d1a51561b302203ba1e1b33bf6e71032e34c0916f78bb6a333c2049a16b16642ab5638aa6204a6014c695221023c5d83e61fbb07fae23b1ef5600b44e068d79de7025b7c97b4a17103e2e65cf921032b873786d37b7769b1777f43081bd14b6f6d7f5ea26c2362860eda0b2a60116a2103e23f0e9748f618bd53b4b6c23c56714b031623691425c1b5c82c907fdc0f5e0c53aeffffffff554fbce7a6e82360095f213752d97ffa3fc6b1b600d298b72b5e261c83ca614b01000000fdfd000047304402207c9b7e46feedbd77143e81bb4c099cfe0db441e634307a9de2f70305fec2c381022051912c43a004ae2348b440013dd6218136800b89a3a4f1418ca4b27ffa40bf1001483045022100c38e31dfe2437d2fdfeab15a7533c1d3fcb6a7c8d26e5498695cccc43001296c022072e708c8e3a4dbc64dd3a6eac8e2fc0d0a3d55ba746e972b2a5d8275b556ec1d014c695221023d69319c33f4ad28b6518744798ee2a77116d8495785c1cc84d6f219d85ef4f62102678747b4b9aeed0abdc55e02bec75e1eb74fdcd11fee8785ae989ab7b5976c302102882b1281ed00e9b3629f16752f0436932941ea7065f42d4f5725cf4cf153932153aeffffffff0200a3e111000000001976a91442be95374aed1876e1fa0a8ec6a2fa0b0fe1214088ac3dc648000000000017a91442118ab92bfdcfcc884e5edf3063e90f51a3d2488700000000";
-
-    //4th input (Input number 3)
-    let inp_idx = 3;
-    test_sighash_legacy_multisig(rawtx, inp_idx, None);
+    println!("\nsighash_p2sh_multisig_2x2:");
+    compute_sighash_legacy(&raw_tx, inp_idx, None);
 }
 
 fn test_sighash_p2wsh_multisig_2x2() {
@@ -110,125 +55,143 @@ fn test_sighash_p2wsh_multisig_2x2() {
     //ScriptPubkey from its Witness data is:
     //bitcoin-cli decodescript 52210289da5da9d3700156db2d01e6362491733f6c886971791deda74b4e9d707190b2210323c437f30384498be79df2990ce5a8de00844e768c0ccce914335b6c26adea7352ae
     //its ASM is 2 0289da5da9d3700156db2d01e6362491733f6c886971791deda74b4e9d707190b2 0323c437f30384498be79df2990ce5a8de00844e768c0ccce914335b6c26adea73 2 OP_CHECKMULTISIG
-    let rawtx = "010000000001011b9eb4122976fad8f809ee4cea8ac8d1c5b6b8e0d0f9f93327a5d78c9a3945280000000000ffffffff02ba3e0d00000000002200201c3b09401aaa7c9709d118a75d301bdb2180fb68b2e9b3ade8ad4ff7281780cfa586010000000000220020a41d0d894799879ca1bd88c1c3f1c2fd4b1592821cc3c5bfd5be5238b904b09f040047304402201c7563e876d67b5702aea5726cd202bf92d0b1dc52c4acd03435d6073e630bac022032b64b70d7fba0cb8be30b882ea06c5f8ec7288d113459dd5d3e294214e2c96201483045022100f532f7e3b8fd01a0edc86de4870db4e04858964d0a609df81deb99d9581e6c2e02206d9e9b6ab661176be8194faded62f518cdc6ee74dba919e0f35d77cff81f38e5014752210289da5da9d3700156db2d01e6362491733f6c886971791deda74b4e9d707190b2210323c437f30384498be79df2990ce5a8de00844e768c0ccce914335b6c26adea7352ae00000000";
+    let raw_tx = hex!("010000000001011b9eb4122976fad8f809ee4cea8ac8d1c5b6b8e0d0f9f93327a5d78c9a3945280000000000ffffffff02ba3e0d00000000002200201c3b09401aaa7c9709d118a75d301bdb2180fb68b2e9b3ade8ad4ff7281780cfa586010000000000220020a41d0d894799879ca1bd88c1c3f1c2fd4b1592821cc3c5bfd5be5238b904b09f040047304402201c7563e876d67b5702aea5726cd202bf92d0b1dc52c4acd03435d6073e630bac022032b64b70d7fba0cb8be30b882ea06c5f8ec7288d113459dd5d3e294214e2c96201483045022100f532f7e3b8fd01a0edc86de4870db4e04858964d0a609df81deb99d9581e6c2e02206d9e9b6ab661176be8194faded62f518cdc6ee74dba919e0f35d77cff81f38e5014752210289da5da9d3700156db2d01e6362491733f6c886971791deda74b4e9d707190b2210323c437f30384498be79df2990ce5a8de00844e768c0ccce914335b6c26adea7352ae00000000");
     //For the witness transaction sighash computation, we need its referenced output's value from the original transaction:
     //bitcoin-cli getrawtransaction 2845399a8cd7a52733f9f9d0e0b8b6c5d1c88aea4cee09f8d8fa762912b49e1b  3
     //we need vout 0 value in sats:
     let ref_out_value = 968240;
 
-    test_sighash_p2wsh_multisig(rawtx, 0, ref_out_value);
+    println!("\nsighash_p2wsh_multisig_2x2:");
+    compute_sighash_p2wsh(&raw_tx, 0, ref_out_value);
 }
 
 fn test_sighash_p2ms_multisig_2x3() {
     //Spending tx:
     //bitcoin-cli getrawtransaction 949591ad468cef5c41656c0a502d9500671ee421fadb590fbc6373000039b693  3
     //Inp 0 scriptSig has 2 sigs
-    let rawtx = "010000000110a5fee9786a9d2d72c25525e52dd70cbd9035d5152fac83b62d3aa7e2301d58000000009300483045022100af204ef91b8dba5884df50f87219ccef22014c21dd05aa44470d4ed800b7f6e40220428fe058684db1bb2bfb6061bff67048592c574effc217f0d150daedcf36787601483045022100e8547aa2c2a2761a5a28806d3ae0d1bbf0aeff782f9081dfea67b86cacb321340220771a166929469c34959daf726a2ac0c253f9aff391e58a3c7cb46d8b7e0fdc4801ffffffff0180a21900000000001976a914971802edf585cdbc4e57017d6e5142515c1e502888ac00000000";
+    let raw_tx = hex!("010000000110a5fee9786a9d2d72c25525e52dd70cbd9035d5152fac83b62d3aa7e2301d58000000009300483045022100af204ef91b8dba5884df50f87219ccef22014c21dd05aa44470d4ed800b7f6e40220428fe058684db1bb2bfb6061bff67048592c574effc217f0d150daedcf36787601483045022100e8547aa2c2a2761a5a28806d3ae0d1bbf0aeff782f9081dfea67b86cacb321340220771a166929469c34959daf726a2ac0c253f9aff391e58a3c7cb46d8b7e0fdc4801ffffffff0180a21900000000001976a914971802edf585cdbc4e57017d6e5142515c1e502888ac00000000");
     //Original transaction:
     //bitcoin-cli getrawtransaction 581d30e2a73a2db683ac2f15d53590bd0cd72de52555c2722d9d6a78e9fea510  3
     //Out 0 scriptPubKey.type “multisig” has 3 uncompressed pubkeys
     let reftx_script_pubkey_bytes = hex!("524104d81fd577272bbe73308c93009eec5dc9fc319fc1ee2e7066e17220a5d47a18314578be2faea34b9f1f8ca078f8621acd4bc22897b03daa422b9bf56646b342a24104ec3afff0b2b66e8152e9018fe3be3fc92b30bf886b3487a525997d00fd9da2d012dce5d5275854adc3106572a5d1e12d4211b228429f5a7b2f7ba92eb0475bb14104b49b496684b02855bc32f5daefa2e2e406db4418f3b86bca5195600951c7d918cdbe5e6d3736ec2abf2dd7610995c3086976b2c0c7b4e459d10b34a316d5a5e753ae");
     let inp_idx = 0;
 
-    test_sighash_legacy_multisig(rawtx, inp_idx, Some(&reftx_script_pubkey_bytes));
+    println!("\nsighash_p2ms_multisig_2x3:");
+    compute_sighash_legacy(&raw_tx, inp_idx, Some(&reftx_script_pubkey_bytes));
 }
 
-/// Tests legacy multisig transaction input that spends either p2sh or p2ms output.
+/// Computes segwit sighash for a transaction input that spends a p2wksh output with "witness_v0_keyhash" scriptPubKey.type
 ///
 /// # Arguments
 ///
-/// * `rawtx` - spending tx hex
+/// * `raw_tx` - spending tx hex
 /// * `inp_idx` - spending tx input index
-/// * `script_pubkey_bytes_opt` - Option with scriptPubKey bytes. If None, it's p2sh case, i.e., reftx output's scriptPubKey.type is "scripthash". If Some, it's p2ms case, i.e., reftx output's scriptPubKey.type is "multisig".
-fn test_sighash_legacy_multisig(
-    rawtx: &str,
+/// * `value` - ref tx output value in sats
+fn compute_sighash_p2wpkh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
+    let tx: bitcoin::Transaction =
+        bitcoin::consensus::Decodable::consensus_decode(&mut raw_tx).unwrap();
+    let inp = &tx.input[inp_idx];
+    let witness = &inp.witness;
+    println!("Witness: {:?}", witness);
+
+    // BIP-141: The witness must consist of exactly 2 items (≤ 520 bytes each). The first one a
+    // signature, and the second one a public key.
+    assert_eq!(witness.len(), 2);
+    let sig_bytes = witness.nth(0).unwrap();
+    let pk_bytes = witness.nth(1).unwrap();
+
+    let sig = bitcoin::ecdsa::Signature::from_slice(sig_bytes).expect("failed to parse sig");
+
+    //BIP-143: "The item 5 : For P2WPKH witness program, the scriptCode is 0x1976a914{20-byte-pubkey-hash}88ac"
+    //this is nothing but a standard P2PKH script OP_DUP OP_HASH160 <pubKeyHash> OP_EQUALVERIFY OP_CHECKSIG:
+    let pk = bitcoin::PublicKey::from_slice(pk_bytes).expect("failed to parse pubkey");
+    let wpkh = pk.wpubkey_hash().expect("compressed key");
+    println!("Script pubkey hash: {:x}", wpkh);
+    let spk = bitcoin::ScriptBuf::new_v0_p2wpkh(&wpkh);
+    let script_code = spk.p2wpkh_script_code().expect("failed to get script code");
+
+    let mut cache = bitcoin::sighash::SighashCache::new(&tx);
+    let sighash = cache
+        .segwit_signature_hash(inp_idx, &script_code, value, sig.hash_ty)
+        .expect("failed to compute sighash");
+    println!("Segwit p2wpkh sighash: {:x}", sighash);
+    //verify this
+    let msg = bitcoin::secp256k1::Message::from_slice(&sighash[..]).unwrap();
+    println!("msg is {:x}", msg);
+    let secp = bitcoin::secp256k1::Secp256k1::new();
+    secp.verify_ecdsa(&msg, &sig.sig, &pk.inner).unwrap();
+}
+
+/// Computes sighash for a legacy multisig transaction input that spends either a p2sh or a p2ms output.
+///
+/// # Arguments
+///
+/// * `raw_tx` - spending tx hex
+/// * `inp_idx` - spending tx input inde
+/// * `script_pubkey_bytes_opt` - Option with scriptPubKey bytes. If None, it's p2sh case, i.e., reftx output's scriptPubKey.type is "scripthash". In this case scriptPubkey is extracted from the spending transaction's scriptSig. If Some(), it's p2ms case, i.e., reftx output's scriptPubKey.type is "multisig", and the scriptPubkey is supplied from the referenced output.
+fn compute_sighash_legacy(
+    mut raw_tx: &[u8],
     inp_idx: usize,
     script_pubkey_bytes_opt: Option<&[u8]>,
 ) {
-    let bytes: Vec<u8> = FromHex::from_hex(&rawtx).expect("hex decoding");
-    let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
+    let tx: bitcoin::Transaction =
+        bitcoin::consensus::Decodable::consensus_decode(&mut raw_tx).unwrap();
     let inp = &tx.input[inp_idx];
     let script_sig = &inp.script_sig;
-    println!("script_sig {}", script_sig);
-    let mut script_pubkey_bytes: &[u8] = &[];
-    let mut sig_vec = vec![];
-    let mut last_sighash_flag = 0;
-    // the scriptsig that corresponds to an M of N multisig should be: PUSHBYTES_0 PUSHBYTES_K0 <sig0><sighashflag0> ... PUSHBYTES_Km <sigM><sighashflagM> PUSHBYTES_X <scriptpubkey>
-    // where the signature lengths with a single byte sighash flags 71 < k0 ... km < 75
-    // here we assume that we have an M of N multisig scriptpubkey.`An assert will fail later if it's not.
-    for (k, instr) in script_sig.instructions().enumerate() {
-        match instr.unwrap() {
-            Instruction::PushBytes(pb) => {
-                // extract from script_sig: sig_vec, and for p2sh script_pubkey_bytes
-                if k == 0 {
-                    assert!(
-                        pb.is_empty(),
-                        "first in ScriptSig must be PUSHBYTES_0 got {:?}",
-                        pb
-                    )
-                } else if script_pubkey_bytes_opt.is_none()
-                    && k == script_sig.instructions().count() - 1
-                {
-                    // p2sh case. last is ScriptPubkey
-                    script_pubkey_bytes = pb.as_bytes();
-                } else {
-                    // all others must be signatures between 70 and 73 bytes
-                    let (sighash_flag, sig) = pb.as_bytes().split_last().unwrap();
-                    assert!(
-                        sig.len() <= 73 && sig.len() >= 70,
-                        "signature length {} out of bounds",
-                        sig.len()
-                    );
-                    // take sighash_flag into account - can they be different?
-                    assert!(
-                        last_sighash_flag == 0 || last_sighash_flag == *sighash_flag,
-                        "different sighash flags"
-                    );
-                    last_sighash_flag = *sighash_flag;
-                    sig_vec.push(sig);
+    println!("scriptSig is: {}", script_sig);
+    let cache = sighash::SighashCache::new(&tx);
+    //In the P2SH case we get scriptPubKey from scriptSig of the spending input.
+    //The scriptSig that corresponds to an M of N multisig should be: PUSHBYTES_0 PUSHBYTES_K0 <sig0><sighashflag0> ... PUSHBYTES_Km <sigM><sighashflagM> PUSHBYTES_X <scriptPubKey>
+    //Here we assume that we have an M of N multisig scriptPubKey.
+    let mut instructions: Vec<_> = script_sig.instructions().collect();
+    let script_pubkey_p2sh;
+    let script_pubkey_bytes = match script_pubkey_bytes_opt {
+        //In the P2MS case, the scriptPubKey is in the referenced output, passed into this function
+        Some(bytes) => bytes,
+        //In the P2SH case, the scriptPubKey is the last scriptSig PushBytes instruction
+        None => {
+            script_pubkey_p2sh = instructions.pop().unwrap().unwrap();
+            script_pubkey_p2sh.push_bytes().unwrap().as_bytes()
+        }
+    };
+    let script_code = bitcoin::Script::from_bytes(script_pubkey_bytes);
+
+    //for a M of N multisig, the required_sig_cnt will be M and pubkey_vec.len() is N:
+    let (required_sig_cnt, pubkey_vec) = decode_script_pubkey(&script_code);
+    let n = pubkey_vec.len();
+
+    let pushbytes_0 = instructions.remove(0).unwrap();
+    assert!(
+        pushbytes_0.push_bytes().unwrap().as_bytes().is_empty(),
+        "first in ScriptSig must be PUSHBYTES_0 got {:?}",
+        pushbytes_0
+    );
+
+    let mut sig_verified_cnt = 0;
+    //All other scriptSig instructions must be signatures
+    for instr in instructions {
+        let sig =
+            bitcoin::ecdsa::Signature::from_slice(instr.unwrap().push_bytes().unwrap().as_bytes())
+                .expect("failed to parse sig");
+        let sighash = cache
+            .legacy_signature_hash(inp_idx, script_code, sig.hash_ty.to_u32())
+            .expect("failed to compute sighash");
+        println!(
+            "Legacy sighash: {:x} (sighash flag {})",
+            sighash, sig.hash_ty
+        );
+        let msg = bitcoin::secp256k1::Message::from_slice(&sighash[..]).unwrap();
+        for pk in &pubkey_vec {
+            let secp = bitcoin::secp256k1::Secp256k1::new();
+            match secp.verify_ecdsa(&msg, &sig.sig, &pk.inner) {
+                Ok(_) => {
+                    sig_verified_cnt += 1;
+                    println!("Verified signature with PubKey {}", pk)
                 }
-                println!(
-                    "ScriptSig PushBytes len {}: {:?}",
-                    pb.as_bytes().to_vec().len(),
-                    pb
-                )
-            }
-            Instruction::Op(op) => {
-                assert!(false, "we only expect PushBytes here, got Op({})", op)
+                Err(err) => println!("{}", err),
             }
         }
     }
-    println!("sig vec {:?}", sig_vec);
-
-    if script_pubkey_bytes_opt.is_some() {
-        // p2ms case
-        script_pubkey_bytes = script_pubkey_bytes_opt.unwrap();
-    }
-    let script_pubkey = bitcoin::Script::from_bytes(script_pubkey_bytes);
-    //for a M of N multisig, the required_sig_cnt will be M and pubkey_vec.len() is N:
-    let (required_sig_cnt, pubkey_vec) = decode_script_pubkey(&script_pubkey);
-
-    let sighash = sighash::SighashCache::new(&tx);
-    let mut out_bytes = vec![];
-    let res = sighash.legacy_encode_signing_data_to(
-        &mut out_bytes,
-        inp_idx,
-        &script_pubkey,
-        //TODO we are assuming that all sighash flags are the same- is that always true?
-        last_sighash_flag, //bitcoin::EcdsaSighashType::All
-    );
-    match res {
-        EncodeSigningDataResult::SighashSingleBug => println!("!!! SighashSingleBug"),
-        EncodeSigningDataResult::WriteResult(Ok(_)) => println!("Legacy sighash Ok"),
-        EncodeSigningDataResult::WriteResult(Err(err)) => println!("Legacy sighash err {}", err),
-    }
-    let hash = sha256d::Hash::hash(&out_bytes);
-    let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
-
-    println!("sighash is {:x}", out_bytes.as_hex());
-    //that's the N from M of N multisig.
-    let n = pubkey_vec.len();
-    let sig_verified_cnt = verify_sigs_against_pubkeys(&msg, pubkey_vec, sig_vec);
 
     //this is the actual test:
     //for an M of N multisig, this assert checks that we indeed have M verified signatures:
@@ -244,60 +207,58 @@ fn test_sighash_legacy_multisig(
     );
 }
 
-/// Tests segwit multisig transaction input that spends a p2wsh output with "witness_v0_scripthash" scriptPubKey.type
+/// Computes sighash for a segwit multisig transaction input that spends a p2wsh output with "witness_v0_scripthash" scriptPubKey.type
 ///
 /// # Arguments
 ///
-/// * `rawtx` - spending tx hex
+/// * `raw_tx` - spending tx hex
 /// * `inp_idx` - spending tx input index
 /// * `value` - ref tx output value in sats
-fn test_sighash_p2wsh_multisig(rawtx: &str, inp_idx: usize, value: u64) {
-    let bytes: Vec<u8> = FromHex::from_hex(&rawtx).expect("hex decoding");
-    let tx: bitcoin::Transaction = deserialize(&bytes).expect("tx deserialization");
+fn compute_sighash_p2wsh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
+    let tx: bitcoin::Transaction =
+        bitcoin::consensus::Decodable::consensus_decode(&mut raw_tx).unwrap();
     let inp = &tx.input[inp_idx];
     let witness = &inp.witness;
     println!("witness {:?}", witness);
-    let mut sig_vec = vec![];
-    let mut last_sighash_flag = 0;
 
-    //last element is called  witness_script according to BIP141
+    //last element is called  witnessScript according to BIP141. It supersedes scriptPubKey.
     let witness_script_bytes: &[u8] = witness.last().expect("Out of Bounds");
     let witness_script = bitcoin::Script::from_bytes(witness_script_bytes);
-    //in an M of N multisig, required_sig_cnt is M and pubkey_vec.len() is N
+    let mut cache = sighash::SighashCache::new(&tx);
+
+    //for a M of N multisig, the required_sig_cnt will be M and pubkey_vec.len() is N:
     let (required_sig_cnt, pubkey_vec) = decode_script_pubkey(&witness_script);
-
-    //in an M of N multisig, the witness elements from 1 (0-based) to N-2 are signatures (with sighash flags as the last byte)
-    for n in witness.len() - required_sig_cnt - 1..witness.len() - 1 {
-        let (sighash_flag, sig) = witness.nth(n).expect("Out of Bounds").split_last().unwrap();
-        sig_vec.push(sig);
-        //take sighash_flag into account - can they be different?
-        assert!(
-            last_sighash_flag == 0 || last_sighash_flag == *sighash_flag,
-            "different sighash flags"
-        );
-        last_sighash_flag = *sighash_flag;
-    }
-    println!("sig vec {:?}", sig_vec);
-
-    let mut sighash = sighash::SighashCache::new(&tx);
-    let mut out_bytes = vec![];
-    sighash
-        .segwit_encode_signing_data_to(
-            &mut out_bytes,
-            inp_idx,
-            &witness_script,
-            value,
-            //TODO we are assuming that all sighash flags are the same- is that always true?
-            bitcoin::sighash::EcdsaSighashType::from_consensus(last_sighash_flag.into()),
-        )
-        .unwrap();
-    let hash = sha256d::Hash::hash(&out_bytes);
-    let msg = bitcoin::secp256k1::Message::from_slice(&hash[..]).unwrap();
-
-    println!("sighash is {:x}", out_bytes.as_hex());
-    //that's the N from M of N multisig.
     let n = pubkey_vec.len();
-    let sig_verified_cnt = verify_sigs_against_pubkeys(&msg, pubkey_vec, sig_vec);
+
+    let mut sig_verified_cnt = 0;
+    //in an M of N multisig, the witness elements from 1 (0-based) to M-2 are signatures (with sighash flags as the last byte)
+    for i in 1..=witness.len() - 2 {
+        let sig_bytes = witness.nth(i).expect("Out of Bounds");
+        let sig = bitcoin::ecdsa::Signature::from_slice(sig_bytes).expect("failed to parse sig");
+        let sig_len = sig_bytes.len() - 1; //last byte is EcdsaSighashType sighash flag
+                                           //ECDSA signature in DER format lengths are between 70 and 72 bytes
+        assert!(
+            (70..=72).contains(&sig_len),
+            "signature length {} out of bounds",
+            sig_len
+        );
+        //here we assume that all sighash_flags are the same. Can they be different?
+        let sighash = cache
+            .segwit_signature_hash(inp_idx, witness_script, value, sig.hash_ty)
+            .expect("failed to compute sighash");
+        println!("Segwit p2wsh sighash: {:x} ({})", sighash, sig.hash_ty);
+        let msg = bitcoin::secp256k1::Message::from_slice(&sighash[..]).unwrap();
+        for pk in &pubkey_vec {
+            let secp = bitcoin::secp256k1::Secp256k1::new();
+            match secp.verify_ecdsa(&msg, &sig.sig, &pk.inner) {
+                Ok(_) => {
+                    sig_verified_cnt += 1;
+                    println!("Verified signature with PubKey {}", pk)
+                }
+                Err(err) => println!("{}", err),
+            }
+        }
+    }
 
     //this is the actual test:
     //for an M of N multisig, this assert checks that we indeed have M verified signatures:
@@ -322,7 +283,7 @@ fn test_sighash_p2wsh_multisig(rawtx: &str, inp_idx: usize, value: u64) {
 /// # Returns
 ///
 /// A tuple (required signature count, vector of pubkeys)
-fn decode_script_pubkey(script_pubkey: &bitcoin::Script) -> (usize, Vec<&[u8]>) {
+fn decode_script_pubkey(script_pubkey: &bitcoin::Script) -> (usize, Vec<bitcoin::PublicKey>) {
     println!("ScriptPubkey: {:?}", script_pubkey);
 
     let mut pubkey_vec = vec![];
@@ -332,7 +293,8 @@ fn decode_script_pubkey(script_pubkey: &bitcoin::Script) -> (usize, Vec<&[u8]>) 
         match instr.unwrap() {
             Instruction::PushBytes(pb) => {
                 assert!(k > 0);
-                pubkey_vec.push(pb.as_bytes());
+                let pk = bitcoin::PublicKey::from_slice(pb.as_bytes()).unwrap();
+                pubkey_vec.push(pk);
             }
             Instruction::Op(op) => {
                 if k == 0 {
@@ -361,40 +323,4 @@ fn decode_script_pubkey(script_pubkey: &bitcoin::Script) -> (usize, Vec<&[u8]>) 
     }
 
     (required_sig_cnt.into(), pubkey_vec)
-}
-
-/// Verifies a vector of signatures against a vector of pubkeys
-///
-/// Uses algorithm from https://en.bitcoin.it/wiki/OP_CHECKMULTISIG
-///
-/// # Arguments
-///
-/// * `msg`  - Spending transaction's sighash
-/// * `pubkey_vec`  - Vector of pubkeys from ScriptPubkey
-/// * `sig_vec`  - Vector of signatures from the spending transaction's input
-///
-/// # Returns
-///
-/// The number of pubkeys from pubkey_vec that correspond to a signature from sig_vec, given spending tx's sighash.
-fn verify_sigs_against_pubkeys(
-    msg: &bitcoin::secp256k1::Message,
-    pubkey_vec: Vec<&[u8]>,
-    sig_vec: Vec<&[u8]>,
-) -> usize {
-    let mut sig_verified_cnt = 0;
-    for pk in &pubkey_vec {
-        let pk = bitcoin::secp256k1::PublicKey::from_slice(pk).unwrap();
-        for sig in &sig_vec {
-            let sig = bitcoin::secp256k1::ecdsa::Signature::from_der(sig).unwrap();
-            let secp = bitcoin::secp256k1::Secp256k1::new();
-            match secp.verify_ecdsa(&msg, &sig, &pk) {
-                Ok(_) => {
-                    sig_verified_cnt += 1;
-                    println!("Verified signature with PubKey {}", pk)
-                }
-                Err(err) => println!("{}", err),
-            }
-        }
-    }
-    sig_verified_cnt
 }
