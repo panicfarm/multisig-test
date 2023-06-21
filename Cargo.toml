@@ -12,3 +12,4 @@ bitcoin-internals = "0.1"
 hex_lit = "0.1"
 hex = "0.4"
 bitcoin_hashes = { version = "0.12.0", default-features = false }
+miniscript = "9.0"

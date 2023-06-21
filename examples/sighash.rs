@@ -32,7 +32,7 @@ fn test_sighash_p2wpkh() {
     let ref_out_value = 200000000;
 
     println!("\nsighash_p2wpkh:");
-    compute_sighash_p2wpkh(&raw_tx, inp_idx, ref_out_value);
+    verify_signatures_p2wpkh(&raw_tx, inp_idx, ref_out_value);
 }
 
 fn test_sighash_p2sh_multisig_2x2() {
@@ -45,7 +45,7 @@ fn test_sighash_p2sh_multisig_2x2() {
     let inp_idx = 0;
 
     println!("\nsighash_p2sh_multisig_2x2:");
-    compute_sighash_legacy(&raw_tx, inp_idx, None);
+    verify_signatures_legacy(&raw_tx, inp_idx, None);
 }
 
 fn test_sighash_p2wsh_multisig_2x2() {
@@ -62,7 +62,7 @@ fn test_sighash_p2wsh_multisig_2x2() {
     let ref_out_value = 968240;
 
     println!("\nsighash_p2wsh_multisig_2x2:");
-    compute_sighash_p2wsh(&raw_tx, 0, ref_out_value);
+    verify_signatures_p2wsh(&raw_tx, 0, ref_out_value);
 }
 
 fn test_sighash_p2ms_multisig_2x3() {
@@ -77,7 +77,7 @@ fn test_sighash_p2ms_multisig_2x3() {
     let inp_idx = 0;
 
     println!("\nsighash_p2ms_multisig_2x3:");
-    compute_sighash_legacy(&raw_tx, inp_idx, Some(&reftx_script_pubkey_bytes));
+    verify_signatures_legacy(&raw_tx, inp_idx, Some(&reftx_script_pubkey_bytes));
 }
 
 /// Computes segwit sighash for a transaction input that spends a p2wksh output with "witness_v0_keyhash" scriptPubKey.type
@@ -87,7 +87,7 @@ fn test_sighash_p2ms_multisig_2x3() {
 /// * `raw_tx` - spending tx hex
 /// * `inp_idx` - spending tx input index
 /// * `value` - ref tx output value in sats
-fn compute_sighash_p2wpkh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
+fn verify_signatures_p2wpkh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
     let tx: bitcoin::Transaction =
         bitcoin::consensus::Decodable::consensus_decode(&mut raw_tx).unwrap();
     let inp = &tx.input[inp_idx];
@@ -129,7 +129,7 @@ fn compute_sighash_p2wpkh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
 /// * `raw_tx` - spending tx hex
 /// * `inp_idx` - spending tx input inde
 /// * `script_pubkey_bytes_opt` - Option with scriptPubKey bytes. If None, it's p2sh case, i.e., reftx output's scriptPubKey.type is "scripthash". In this case scriptPubkey is extracted from the spending transaction's scriptSig. If Some(), it's p2ms case, i.e., reftx output's scriptPubKey.type is "multisig", and the scriptPubkey is supplied from the referenced output.
-fn compute_sighash_legacy(
+fn verify_signatures_legacy(
     mut raw_tx: &[u8],
     inp_idx: usize,
     script_pubkey_bytes_opt: Option<&[u8]>,
@@ -214,7 +214,7 @@ fn compute_sighash_legacy(
 /// * `raw_tx` - spending tx hex
 /// * `inp_idx` - spending tx input index
 /// * `value` - ref tx output value in sats
-fn compute_sighash_p2wsh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
+fn verify_signatures_p2wsh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
     let tx: bitcoin::Transaction =
         bitcoin::consensus::Decodable::consensus_decode(&mut raw_tx).unwrap();
     let inp = &tx.input[inp_idx];
