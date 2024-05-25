@@ -5,6 +5,6 @@ The sighash computation is inspired by [Andrew Poelstra's comment](https://bitco
 
 It is currently **lacking P2TR** examples.
 
-To run all the tests with printouts use:
+To run all examples use:
 
-`cargo test -- --nocapture`
+`cargo run --example sighash`
