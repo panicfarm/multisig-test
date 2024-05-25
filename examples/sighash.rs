@@ -107,19 +107,22 @@ fn verify_signatures_p2wpkh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
     let pk = bitcoin::PublicKey::from_slice(pk_bytes).expect("failed to parse pubkey");
     let wpkh = pk.wpubkey_hash().expect("compressed key");
     println!("Script pubkey hash: {:x}", wpkh);
-    let spk = bitcoin::ScriptBuf::new_v0_p2wpkh(&wpkh);
-    let script_code = spk.p2wpkh_script_code().expect("failed to get script code");
-
+    let spk = bitcoin::ScriptBuf::new_p2wpkh(&wpkh);
     let mut cache = bitcoin::sighash::SighashCache::new(&tx);
     let sighash = cache
-        .segwit_signature_hash(inp_idx, &script_code, value, sig.hash_ty)
+        .p2wpkh_signature_hash(
+            inp_idx,
+            &spk,
+            bitcoin::amount::Amount::from_sat(value),
+            sig.sighash_type,
+        )
         .expect("failed to compute sighash");
     println!("Segwit p2wpkh sighash: {:x}", sighash);
     //verify this
-    let msg = bitcoin::secp256k1::Message::from_slice(&sighash[..]).unwrap();
+    let msg = bitcoin::secp256k1::Message::from_digest_slice(&sighash[..]).unwrap();
     println!("msg is {:x}", msg);
     let secp = bitcoin::secp256k1::Secp256k1::new();
-    secp.verify_ecdsa(&msg, &sig.sig, &pk.inner).unwrap();
+    secp.verify_ecdsa(&msg, &sig.signature, &pk.inner).unwrap();
 }
 
 /// Computes sighash for a legacy multisig transaction input that spends either a p2sh or a p2ms output.
@@ -174,16 +177,16 @@ fn verify_signatures_legacy(
             bitcoin::ecdsa::Signature::from_slice(instr.unwrap().push_bytes().unwrap().as_bytes())
                 .expect("failed to parse sig");
         let sighash = cache
-            .legacy_signature_hash(inp_idx, script_code, sig.hash_ty.to_u32())
+            .legacy_signature_hash(inp_idx, script_code, sig.sighash_type.to_u32())
             .expect("failed to compute sighash");
         println!(
             "Legacy sighash: {:x} (sighash flag {})",
-            sighash, sig.hash_ty
+            sighash, sig.sighash_type
         );
-        let msg = bitcoin::secp256k1::Message::from_slice(&sighash[..]).unwrap();
+        let msg = bitcoin::secp256k1::Message::from_digest_slice(&sighash[..]).unwrap();
         for pk in &pubkey_vec {
             let secp = bitcoin::secp256k1::Secp256k1::new();
-            match secp.verify_ecdsa(&msg, &sig.sig, &pk.inner) {
+            match secp.verify_ecdsa(&msg, &sig.signature, &pk.inner) {
                 Ok(_) => {
                     sig_verified_cnt += 1;
                     println!("Verified signature with PubKey {}", pk)
@@ -244,13 +247,18 @@ fn verify_signatures_p2wsh(mut raw_tx: &[u8], inp_idx: usize, value: u64) {
         );
         //here we assume that all sighash_flags are the same. Can they be different?
         let sighash = cache
-            .segwit_signature_hash(inp_idx, witness_script, value, sig.hash_ty)
+            .p2wsh_signature_hash(
+                inp_idx,
+                witness_script,
+                bitcoin::amount::Amount::from_sat(value),
+                sig.sighash_type,
+            )
             .expect("failed to compute sighash");
-        println!("Segwit p2wsh sighash: {:x} ({})", sighash, sig.hash_ty);
-        let msg = bitcoin::secp256k1::Message::from_slice(&sighash[..]).unwrap();
+        println!("Segwit p2wsh sighash: {:x} ({})", sighash, sig.sighash_type);
+        let msg = bitcoin::secp256k1::Message::from_digest_slice(&sighash[..]).unwrap();
         for pk in &pubkey_vec {
             let secp = bitcoin::secp256k1::Secp256k1::new();
-            match secp.verify_ecdsa(&msg, &sig.sig, &pk.inner) {
+            match secp.verify_ecdsa(&msg, &sig.signature, &pk.inner) {
                 Ok(_) => {
                     sig_verified_cnt += 1;
                     println!("Verified signature with PubKey {}", pk)
